@@ -1,0 +1,964 @@
+"use client"
+
+import type React from "react"
+
+import { useEffect, useRef, useState } from "react"
+import * as THREE from "three"
+import GameHUD from "@/components/game-hud"
+import GameMenu from "@/components/game-menu"
+
+export default function GamePage() {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const sceneRef = useRef<THREE.Scene | null>(null)
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
+  const playerRef = useRef<any>(null)
+  const vehiclesRef = useRef<any[]>([])
+  const npcsRef = useRef<any[]>([])
+  const bulletsRef = useRef<any[]>([])
+  const missionMarkersRef = useRef<any[]>([])
+  const explosionsRef = useRef<any[]>([])
+  const gameStateRef = useRef<any>({
+    health: 100,
+    money: 5000,
+    ammo: 150,
+    currentWeapon: "pistol",
+    inVehicle: false,
+    currentVehicle: null,
+    missions: [],
+    completedMissions: 0,
+    stamina: 100,
+    maxStamina: 100,
+    cameraMode: "third-person",
+    kills: 0,
+    currentMission: null,
+    missionObjectives: [],
+    deaths: 0,
+    accuracy: 0,
+    totalShots: 0,
+    totalHits: 0,
+    distanceTraveled: 0,
+    vehiclesDestroyed: 0,
+    timeElapsed: 0,
+    level: 1,
+    experience: 0,
+    maxExperience: 1000,
+    wantedLevel: 0,
+    maxWantedLevel: 5,
+    threatLevel: 0,
+    bossHealth: 0,
+    bossFighting: false,
+    comboDamage: 1,
+    lastKillTime: 0,
+    comboKills: 0,
+  })
+  const [gameState, setGameState] = useState(gameStateRef.current)
+  const [showMenu, setShowMenu] = useState(false)
+  const keysPressed = useRef<{ [key: string]: boolean }>({})
+  const playerStateRef = useRef({
+    isJumping: false,
+    isSprinting: false,
+    velocity: new THREE.Vector3(0, 0, 0),
+    lastPosition: new THREE.Vector3(0, 0, 0),
+    screenShakeIntensity: 0,
+    lastDamageTime: 0,
+  })
+  const vehicleStateRef = useRef({
+    acceleration: 0,
+    speed: 0,
+    maxSpeed: 2,
+    rotation: 0,
+    rotationSpeed: 0.05,
+  })
+  const weaponsRef = useRef({
+    pistol: { damage: 15, fireRate: 80, ammoPerShot: 1, bulletSpeed: 50 },
+    rifle: { damage: 35, fireRate: 120, ammoPerShot: 1, bulletSpeed: 60 },
+    shotgun: { damage: 60, fireRate: 250, ammoPerShot: 3, bulletSpeed: 40 },
+  })
+  const lastShotRef = useRef(0)
+  const missionsRef = useRef([
+    {
+      id: 1,
+      name: "Eliminate the Syndicate",
+      description: "Take down 10 enemy operatives",
+      type: "elimination",
+      target: 10,
+      reward: 1000,
+      completed: false,
+    },
+    {
+      id: 2,
+      name: "Steal the Data",
+      description: "Reach the data terminal at the north tower",
+      type: "delivery",
+      target: new THREE.Vector3(0, 1, 100),
+      reward: 2000,
+      completed: false,
+    },
+    {
+      id: 3,
+      name: "Survive the Onslaught",
+      description: "Survive for 120 seconds against waves of enemies",
+      type: "survival",
+      target: 120,
+      reward: 1500,
+      completed: false,
+    },
+  ])
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const soundsRef = useRef<{ [key: string]: AudioBuffer }>({})
+  const particlesRef = useRef<any[]>([])
+  const playSoundRef = useRef<any>(null)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+
+    // Scene setup
+    const scene = new THREE.Scene()
+    scene.background = new THREE.Color(0x0a0e27)
+    scene.fog = new THREE.Fog(0x0a0e27, 500, 1000)
+    sceneRef.current = scene
+
+    // Camera setup
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000)
+    camera.position.set(0, 15, 30)
+    cameraRef.current = camera
+
+    // Renderer setup
+    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.setSize(window.innerWidth, window.innerHeight)
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFShadowMap
+    containerRef.current.appendChild(renderer.domElement)
+    rendererRef.current = renderer
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x00ffff, 0.4)
+    scene.add(ambientLight)
+
+    const directionalLight = new THREE.DirectionalLight(0xff00ff, 0.8)
+    directionalLight.position.set(100, 100, 50)
+    directionalLight.castShadow = true
+    directionalLight.shadow.mapSize.width = 2048
+    directionalLight.shadow.mapSize.height = 2048
+    scene.add(directionalLight)
+
+    const pointLight1 = new THREE.PointLight(0x00ffff, 1, 200)
+    pointLight1.position.set(50, 30, 50)
+    scene.add(pointLight1)
+
+    const pointLight2 = new THREE.PointLight(0xff00ff, 1, 200)
+    pointLight2.position.set(-50, 30, -50)
+    scene.add(pointLight2)
+
+    // Create map
+    createNeonNexusMap(scene)
+
+    // Create player
+    playerRef.current = createPlayer(scene)
+
+    // Create NPCs - MORE AGGRESSIVE
+    createNPCs(scene, npcsRef, 12)
+
+    // Create vehicles
+    createVehicles(scene, vehiclesRef)
+
+    // Create mission markers
+    createMissionMarkers(scene, missionMarkersRef, missionsRef.current)
+
+    // Start first mission
+    if (missionsRef.current.length > 0) {
+      gameStateRef.current.currentMission = missionsRef.current[0]
+      gameStateRef.current.missionObjectives = [missionsRef.current[0].description]
+    }
+
+    const gameStartTime = Date.now()
+    const timerInterval = setInterval(() => {
+      gameStateRef.current.timeElapsed = Math.floor((Date.now() - gameStartTime) / 1000)
+    }, 1000)
+
+    // Handle keyboard input
+    const handleKeyDown = (e: KeyboardEvent) => {
+      keysPressed.current[e.key.toLowerCase()] = true
+      if (e.key === "Escape") setShowMenu(!showMenu)
+      if (e.key === "e" || e.key === "E") handleInteraction()
+      if (!gameStateRef.current.inVehicle) {
+        if (e.key === "Shift") playerStateRef.current.isSprinting = true
+        if (e.key === " ") {
+          e.preventDefault()
+          if (!playerStateRef.current.isJumping) {
+            playerStateRef.current.isJumping = true
+            playerStateRef.current.velocity.y = 15
+          }
+        }
+      }
+      if (e.key === "c" || e.key === "C") {
+        if (!gameStateRef.current.inVehicle) {
+          gameStateRef.current.cameraMode =
+            gameStateRef.current.cameraMode === "first-person" ? "third-person" : "first-person"
+          setGameState({ ...gameStateRef.current })
+        }
+      }
+      if (e.key === "1") gameStateRef.current.currentWeapon = "pistol"
+      if (e.key === "2") gameStateRef.current.currentWeapon = "rifle"
+      if (e.key === "3") gameStateRef.current.currentWeapon = "shotgun"
+      if (e.key === "m" || e.key === "M") {
+        const currentIndex = missionsRef.current.findIndex((m) => m.id === gameStateRef.current.currentMission?.id)
+        if (currentIndex < missionsRef.current.length - 1) {
+          gameStateRef.current.currentMission = missionsRef.current[currentIndex + 1]
+          gameStateRef.current.missionObjectives = [gameStateRef.current.currentMission.description]
+          setGameState({ ...gameStateRef.current })
+        }
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      keysPressed.current[e.key.toLowerCase()] = false
+      if (e.key === "Shift") playerStateRef.current.isSprinting = false
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("keyup", handleKeyUp)
+
+    // Handle mouse click for shooting
+    const handleMouseClick = (e: MouseEvent) => {
+      if (!showMenu && !gameStateRef.current.inVehicle) {
+        shoot(scene)
+      }
+    }
+    window.addEventListener("click", handleMouseClick)
+
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    audioContextRef.current = audioContext
+
+    const createParticleSystem = () => {
+      const particleGeometry = new THREE.BufferGeometry()
+      const particleCount = 1000
+      const positions = new Float32Array(particleCount * 3)
+
+      for (let i = 0; i < particleCount * 3; i += 3) {
+        positions[i] = (Math.random() - 0.5) * 500
+        positions[i + 1] = Math.random() * 200
+        positions[i + 2] = (Math.random() - 0.5) * 500
+      }
+
+      particleGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3))
+
+      const particleMaterial = new THREE.PointsMaterial({
+        color: 0x00ffff,
+        size: 0.5,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.6,
+      })
+
+      const particles = new THREE.Points(particleGeometry, particleMaterial)
+      scene.add(particles)
+      return particles
+    }
+
+    const ambientParticles = createParticleSystem()
+
+    // Animation loop
+    const animate = () => {
+      requestAnimationFrame(animate)
+
+      if (gameStateRef.current.inVehicle && gameStateRef.current.currentVehicle) {
+        updateVehicleDriving(
+          gameStateRef.current.currentVehicle,
+          playerRef.current,
+          keysPressed.current,
+          vehicleStateRef.current,
+        )
+        updateCamera(cameraRef.current!, playerRef.current, gameStateRef.current, gameStateRef.current.currentVehicle)
+      } else {
+        updatePlayerMovement(playerRef.current, keysPressed.current, playerStateRef.current, gameStateRef.current)
+        updateCamera(cameraRef.current!, playerRef.current, gameStateRef.current)
+      }
+
+      npcsRef.current.forEach((npc) => {
+        updateNPCWithAI(npc, playerRef.current, scene, gameStateRef.current)
+      })
+
+      vehiclesRef.current.forEach((vehicle) => {
+        if (vehicle !== gameStateRef.current.currentVehicle) {
+          updateVehicle(vehicle)
+        }
+      })
+
+      updateBullets(bulletsRef.current, scene, npcsRef.current, gameStateRef.current, playerRef.current)
+      updateMissions(gameStateRef.current, playerRef.current, missionsRef.current)
+      updateMissionMarkers(missionMarkersRef.current, gameStateRef.current.currentMission)
+
+      updateExplosions(explosionsRef.current, scene)
+      applyScreenShake(cameraRef.current!, playerStateRef.current)
+
+      if (ambientParticles) {
+        ambientParticles.rotation.x += 0.0001
+        ambientParticles.rotation.y += 0.0002
+      }
+
+      renderer.render(scene, camera)
+    }
+
+    animate()
+
+    // Handle window resize
+    const handleResize = () => {
+      camera.aspect = window.innerWidth / window.innerHeight
+      camera.updateProjectionMatrix()
+      renderer.setSize(window.innerWidth, window.innerHeight)
+    }
+
+    window.addEventListener("resize", handleResize)
+
+    const playSound = (type: "shoot" | "hit" | "explosion" | "pickup" | "levelup" | "alert" | "impact") => {
+      if (!audioContext) return
+
+      const now = audioContext.currentTime
+      const oscillator = audioContext.createOscillator()
+      const gainNode = audioContext.createGain()
+
+      oscillator.connect(gainNode)
+      gainNode.connect(audioContext.destination)
+
+      switch (type) {
+        case "shoot":
+          oscillator.frequency.setValueAtTime(400, now)
+          oscillator.frequency.exponentialRampToValueAtTime(200, now + 0.1)
+          gainNode.gain.setValueAtTime(0.3, now)
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1)
+          oscillator.start(now)
+          oscillator.stop(now + 0.1)
+          break
+
+        case "hit":
+          oscillator.frequency.setValueAtTime(600, now)
+          oscillator.frequency.exponentialRampToValueAtTime(300, now + 0.15)
+          gainNode.gain.setValueAtTime(0.2, now)
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15)
+          oscillator.start(now)
+          oscillator.stop(now + 0.15)
+          break
+
+        case "explosion":
+          oscillator.type = "triangle"
+          oscillator.frequency.setValueAtTime(150, now)
+          oscillator.frequency.exponentialRampToValueAtTime(50, now + 0.3)
+          gainNode.gain.setValueAtTime(0.4, now)
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3)
+          oscillator.start(now)
+          oscillator.stop(now + 0.3)
+          break
+
+        case "pickup":
+          oscillator.frequency.setValueAtTime(800, now)
+          oscillator.frequency.exponentialRampToValueAtTime(1200, now + 0.2)
+          gainNode.gain.setValueAtValue(0.2, now)
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2)
+          oscillator.start(now)
+          oscillator.stop(now + 0.2)
+          break
+
+        case "levelup":
+          oscillator.frequency.setValueAtTime(500, now)
+          oscillator.frequency.exponentialRampToValueAtTime(1000, now + 0.3)
+          gainNode.gain.setValueAtTime(0.3, now)
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3)
+          oscillator.start(now)
+          oscillator.stop(now + 0.3)
+          break
+
+        case "alert":
+          oscillator.frequency.setValueAtTime(800, now)
+          oscillator.frequency.exponentialRampToValueAtTime(600, now + 0.2)
+          gainNode.gain.setValueAtTime(0.4, now)
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2)
+          oscillator.start(now)
+          oscillator.stop(now + 0.2)
+          break
+
+        case "impact":
+          oscillator.type = "square"
+          oscillator.frequency.setValueAtTime(300, now)
+          oscillator.frequency.exponentialRampToValueAtTime(100, now + 0.15)
+          gainNode.gain.setValueAtTime(0.35, now)
+          gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15)
+          oscillator.start(now)
+          oscillator.stop(now + 0.15)
+          break
+      }
+    }
+
+    playSoundRef.current = playSound
+
+    return () => {
+      clearInterval(timerInterval)
+      window.removeEventListener("keydown", handleKeyDown)
+      window.removeEventListener("keyup", handleKeyUp)
+      window.removeEventListener("click", handleMouseClick)
+      window.removeEventListener("resize", handleResize)
+      containerRef.current?.removeChild(renderer.domElement)
+    }
+  }, [showMenu])
+
+  const handleInteraction = () => {
+    if (gameStateRef.current.inVehicle) {
+      const vehicle = gameStateRef.current.currentVehicle
+      playerRef.current.position.set(vehicle.position.x + 3, vehicle.position.y + 1, vehicle.position.z)
+      gameStateRef.current.inVehicle = false
+      gameStateRef.current.currentVehicle = null
+      vehicleStateRef.current.speed = 0
+      vehicleStateRef.current.acceleration = 0
+      setGameState({ ...gameStateRef.current })
+    } else {
+      vehiclesRef.current.forEach((vehicle) => {
+        const distance = playerRef.current.position.distanceTo(vehicle.position)
+        if (distance < 5) {
+          gameStateRef.current.inVehicle = true
+          gameStateRef.current.currentVehicle = vehicle
+          playerRef.current.position.copy(vehicle.position)
+          setGameState({ ...gameStateRef.current })
+        }
+      })
+    }
+  }
+
+  const shoot = (scene: THREE.Scene) => {
+    const now = Date.now()
+    const weapon = weaponsRef.current[gameStateRef.current.currentWeapon as keyof typeof weaponsRef.current]
+
+    if (gameStateRef.current.ammo >= weapon.ammoPerShot && now - lastShotRef.current > weapon.fireRate) {
+      gameStateRef.current.ammo -= weapon.ammoPerShot
+      gameStateRef.current.totalShots += 1
+      lastShotRef.current = now
+
+      playerStateRef.current.screenShakeIntensity = 0.3
+
+      setGameState({ ...gameStateRef.current })
+
+      if (audioContextRef.current) {
+        const audioContext = audioContextRef.current
+        const oscillator = audioContext.createOscillator()
+        const gainNode = audioContext.createGain()
+        oscillator.connect(gainNode)
+        gainNode.connect(audioContext.destination)
+
+        oscillator.frequency.setValueAtTime(400, audioContext.currentTime)
+        oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.1)
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1)
+        oscillator.start(audioContext.currentTime)
+        oscillator.stop(audioContext.currentTime + 0.1)
+      }
+
+      const bulletGeometry = new THREE.SphereGeometry(0.2, 8, 8)
+      const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 })
+      const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial)
+      bullet.position.copy(playerRef.current.position)
+      bullet.position.y += 2
+
+      const direction = new THREE.Vector3(0, 0, -1)
+      direction.applyQuaternion(playerRef.current.quaternion)
+      bullet.velocity = direction.multiplyScalar(weapon.bulletSpeed)
+      bullet.damage = weapon.damage * gameStateRef.current.comboDamage
+      bullet.lifetime = 5000
+
+      scene.add(bullet)
+      bulletsRef.current.push(bullet)
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="w-full h-screen overflow-hidden">
+      <GameHUD gameState={gameState} inVehicle={gameStateRef.current.inVehicle} />
+      {showMenu && <GameMenu onClose={() => setShowMenu(false)} />}
+    </div>
+  )
+}
+
+// Helper functions
+function createNeonNexusMap(scene: THREE.Scene) {
+  // Ground
+  const groundGeometry = new THREE.PlaneGeometry(500, 500)
+  const groundMaterial = new THREE.MeshStandardMaterial({
+    color: 0x1a1a2e,
+    metalness: 0.3,
+    roughness: 0.8,
+  })
+  const ground = new THREE.Mesh(groundGeometry, groundMaterial)
+  ground.rotation.x = -Math.PI / 2
+  ground.receiveShadow = true
+  scene.add(ground)
+
+  // Buildings
+  const buildingPositions = [
+    { x: 50, z: 50, color: 0x00ffff },
+    { x: -50, z: 50, color: 0xff00ff },
+    { x: 50, z: -50, color: 0x00ff00 },
+    { x: -50, z: -50, color: 0xffff00 },
+    { x: 100, z: 0, color: 0xff0080 },
+    { x: -100, z: 0, color: 0x00ffff },
+    { x: 0, z: 100, color: 0xff00ff },
+    { x: 0, z: -100, color: 0x00ff00 },
+  ]
+
+  buildingPositions.forEach((pos) => {
+    const height = Math.random() * 40 + 20
+    const buildingGeometry = new THREE.BoxGeometry(20, height, 20)
+    const buildingMaterial = new THREE.MeshStandardMaterial({
+      color: pos.color,
+      metalness: 0.6,
+      roughness: 0.4,
+      emissive: pos.color,
+      emissiveIntensity: 0.3,
+    })
+    const building = new THREE.Mesh(buildingGeometry, buildingMaterial)
+    building.position.set(pos.x, height / 2, pos.z)
+    building.castShadow = true
+    building.receiveShadow = true
+    scene.add(building)
+
+    // Add neon edges
+    const edgeGeometry = new THREE.EdgesGeometry(buildingGeometry)
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: pos.color, linewidth: 2 })
+    const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial)
+    edges.position.copy(building.position)
+    scene.add(edges)
+  })
+
+  // Neon grid lines
+  const gridHelper = new THREE.GridHelper(500, 50, 0x00ffff, 0x1a1a2e)
+  gridHelper.position.y = 0.1
+  scene.add(gridHelper)
+}
+
+function createPlayer(scene: THREE.Scene) {
+  const playerGeometry = new THREE.CapsuleGeometry(0.5, 2, 4, 8)
+  const playerMaterial = new THREE.MeshStandardMaterial({
+    color: 0xff0080,
+    metalness: 0.5,
+    roughness: 0.5,
+  })
+  const player = new THREE.Mesh(playerGeometry, playerMaterial)
+  player.position.set(0, 2, 0)
+  player.castShadow = true
+  player.receiveShadow = true
+  player.velocity = new THREE.Vector3(0, 0, 0)
+  scene.add(player)
+  return player
+}
+
+function createNPCs(scene: THREE.Scene, npcsRef: React.MutableRefObject<any[]>, count = 12) {
+  for (let i = 0; i < count; i++) {
+    const npcGeometry = new THREE.CapsuleGeometry(0.4, 1.8, 4, 8)
+    const isBoss = i === 0 && Math.random() < 0.3
+    const npcMaterial = new THREE.MeshStandardMaterial({
+      color: isBoss ? 0xff0000 : new THREE.Color().setHSL(Math.random(), 0.7, 0.5),
+      emissive: isBoss ? 0xff0000 : 0x000000,
+      emissiveIntensity: isBoss ? 0.5 : 0,
+    })
+    const npc = new THREE.Mesh(npcGeometry, npcMaterial)
+    npc.position.set((Math.random() - 0.5) * 200, 1, (Math.random() - 0.5) * 200)
+    npc.castShadow = true
+    npc.receiveShadow = true
+    npc.velocity = new THREE.Vector3(0, 0, 0)
+    npc.direction = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize()
+    npc.health = isBoss ? 200 : 50
+    npc.maxHealth = isBoss ? 200 : 50
+    npc.state = "patrol"
+    npc.targetPlayer = null
+    npc.detectionRange = isBoss ? 100 : 60
+    npc.attackRange = isBoss ? 25 : 15
+    npc.lastAttackTime = 0
+    npc.attackCooldown = isBoss ? 500 : 1000
+    npc.isBoss = isBoss
+    npc.speed = isBoss ? 0.25 : 0.15
+    scene.add(npc)
+    npcsRef.current.push(npc)
+  }
+}
+
+function createVehicles(scene: THREE.Scene, vehiclesRef: React.MutableRefObject<any[]>) {
+  const vehiclePositions = [
+    { x: 30, z: 30 },
+    { x: -30, z: 30 },
+    { x: 30, z: -30 },
+    { x: -30, z: -30 },
+  ]
+
+  vehiclePositions.forEach((pos) => {
+    const carGeometry = new THREE.BoxGeometry(2, 1.5, 4)
+    const carMaterial = new THREE.MeshStandardMaterial({
+      color: 0x00ffff,
+      metalness: 0.8,
+      roughness: 0.2,
+      emissive: 0x00ffff,
+      emissiveIntensity: 0.2,
+    })
+    const car = new THREE.Mesh(carGeometry, carMaterial)
+    car.position.set(pos.x, 1, pos.z)
+    car.castShadow = true
+    car.receiveShadow = true
+    car.velocity = new THREE.Vector3(0, 0, 0)
+    car.speed = 0
+    car.rotation.order = "YXZ"
+    scene.add(car)
+    vehiclesRef.current.push(car)
+  })
+}
+
+function createMissionMarkers(scene: THREE.Scene, markersRef: React.MutableRefObject<any[]>, missions: any[]) {
+  missions.forEach((mission) => {
+    if (mission.type === "delivery" && mission.target instanceof THREE.Vector3) {
+      const markerGeometry = new THREE.ConeGeometry(2, 5, 32)
+      const markerMaterial = new THREE.MeshStandardMaterial({
+        color: 0x00ff00,
+        emissive: 0x00ff00,
+        emissiveIntensity: 0.5,
+      })
+      const marker = new THREE.Mesh(markerGeometry, markerMaterial)
+      marker.position.copy(mission.target)
+      marker.position.y = 5
+      marker.missionId = mission.id
+      scene.add(marker)
+      markersRef.current.push(marker)
+    }
+  })
+}
+
+function updateMissionMarkers(markers: any[], currentMission: any) {
+  markers.forEach((marker) => {
+    if (marker.missionId === currentMission?.id) {
+      marker.visible = true
+      marker.rotation.y += 0.02
+    } else {
+      marker.visible = false
+    }
+  })
+}
+
+function updateMissions(gameState: any, player: THREE.Mesh, missions: any[]) {
+  if (!gameState.currentMission) return
+
+  const mission = gameState.currentMission
+
+  if (mission.type === "elimination") {
+    // Check if player has killed enough enemies
+    if (gameState.kills >= mission.target) {
+      mission.completed = true
+      gameState.money += mission.reward
+      gameState.completedMissions += 1
+
+      // Move to next mission
+      const currentIndex = missions.findIndex((m) => m.id === mission.id)
+      if (currentIndex < missions.length - 1) {
+        gameState.currentMission = missions[currentIndex + 1]
+        gameState.missionObjectives = [gameState.currentMission.description]
+      }
+    }
+  } else if (mission.type === "delivery") {
+    // Check if player reached the target location
+    const distance = player.position.distanceTo(mission.target)
+    if (distance < 10) {
+      mission.completed = true
+      gameState.money += mission.reward
+      gameState.completedMissions += 1
+
+      // Move to next mission
+      const currentIndex = missions.findIndex((m) => m.id === mission.id)
+      if (currentIndex < missions.length - 1) {
+        gameState.currentMission = missions[currentIndex + 1]
+        gameState.missionObjectives = [gameState.currentMission.description]
+      }
+    }
+  }
+}
+
+function updateCamera(camera: THREE.PerspectiveCamera, player: THREE.Mesh, gameState: any, vehicle?: THREE.Mesh) {
+  const playerPos = player.position
+
+  if (gameState.inVehicle && vehicle) {
+    // Vehicle camera - follow from behind
+    const vehiclePos = vehicle.position
+    const cameraDistance = 15
+    const cameraHeight = 8
+    const cameraOffset = new THREE.Vector3(0, cameraHeight, cameraDistance)
+    cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), vehicle.rotation.y)
+    const targetPos = vehiclePos.clone().add(cameraOffset)
+    camera.position.lerp(targetPos, 0.15)
+    camera.lookAt(vehiclePos.x, vehiclePos.y + 2, vehiclePos.z)
+  } else if (gameState.cameraMode === "first-person") {
+    // First-person camera
+    camera.position.lerp(new THREE.Vector3(playerPos.x, playerPos.y + 1.8, playerPos.z), 0.1)
+    camera.lookAt(playerPos.x, playerPos.y + 1.8, playerPos.z - 5)
+  } else {
+    // Third-person camera
+    const cameraDistance = 20
+    const cameraHeight = 10
+    const cameraOffset = new THREE.Vector3(0, cameraHeight, cameraDistance)
+    cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotation.y)
+    const targetPos = playerPos.clone().add(cameraOffset)
+    camera.position.lerp(targetPos, 0.1)
+    camera.lookAt(playerPos.x, playerPos.y + 5, playerPos.z)
+  }
+}
+
+function updatePlayerMovement(
+  player: THREE.Mesh,
+  keysPressed: { [key: string]: boolean },
+  playerState: any,
+  gameState: any,
+) {
+  const baseSpeed = 0.5
+  const sprintMultiplier = 1.5
+  const staminaDrainRate = 0.5
+  const staminaRegenRate = 0.3
+
+  // Calculate movement direction
+  const direction = new THREE.Vector3(0, 0, 0)
+  if (keysPressed["w"]) direction.z -= 1
+  if (keysPressed["s"]) direction.z += 1
+  if (keysPressed["a"]) direction.x -= 1
+  if (keysPressed["d"]) direction.x += 1
+
+  // Handle sprinting
+  let currentSpeed = baseSpeed
+  if (playerState.isSprinting && gameState.stamina > 0 && direction.length() > 0) {
+    currentSpeed = baseSpeed * sprintMultiplier
+    gameState.stamina = Math.max(0, gameState.stamina - staminaDrainRate)
+  } else {
+    playerState.isSprinting = false
+    gameState.stamina = Math.min(gameState.maxStamina, gameState.stamina + staminaRegenRate)
+  }
+
+  // Apply movement
+  if (direction.length() > 0) {
+    direction.normalize()
+    player.position.add(direction.multiplyScalar(currentSpeed))
+    player.rotation.y = Math.atan2(direction.x, direction.z)
+  }
+
+  // Handle gravity and jumping
+  playerState.velocity.y -= 0.2
+  player.position.y += playerState.velocity.y
+
+  if (player.position.y < 1) {
+    player.position.y = 1
+    playerState.velocity.y = 0
+    playerState.isJumping = false
+  }
+
+  // Clamp player to map bounds
+  player.position.x = Math.max(-250, Math.min(250, player.position.x))
+  player.position.z = Math.max(-250, Math.min(250, player.position.z))
+}
+
+function updateVehicleDriving(
+  vehicle: THREE.Mesh,
+  player: THREE.Mesh,
+  keysPressed: { [key: string]: boolean },
+  vehicleState: any,
+) {
+  const accelerationRate = 0.08
+  const decelerationRate = 0.05
+  const friction = 0.92
+
+  // Handle acceleration and braking
+  if (keysPressed["w"]) {
+    vehicleState.acceleration = Math.min(1, vehicleState.acceleration + accelerationRate)
+  } else if (keysPressed["s"]) {
+    vehicleState.acceleration = Math.max(-0.5, vehicleState.acceleration - accelerationRate)
+  } else {
+    vehicleState.acceleration *= friction
+  }
+
+  vehicleState.speed = vehicleState.acceleration * vehicleState.maxSpeed
+
+  // Handle steering
+  if (keysPressed["a"]) {
+    vehicleState.rotation += vehicleState.rotationSpeed * (vehicleState.speed > 0 ? 1 : -1)
+  }
+  if (keysPressed["d"]) {
+    vehicleState.rotation -= vehicleState.rotationSpeed * (vehicleState.speed > 0 ? 1 : -1)
+  }
+
+  vehicle.rotation.y = vehicleState.rotation
+
+  // Move vehicle forward based on rotation and speed
+  const direction = new THREE.Vector3(0, 0, -1)
+  direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), vehicleState.rotation)
+  vehicle.position.add(direction.multiplyScalar(vehicleState.speed))
+
+  // Update player position to match vehicle
+  player.position.copy(vehicle.position)
+
+  // Clamp vehicle to map bounds
+  vehicle.position.x = Math.max(-250, Math.min(250, vehicle.position.x))
+  vehicle.position.z = Math.max(-250, Math.min(250, vehicle.position.z))
+}
+
+function updateNPCWithAI(npc: THREE.Mesh, player: THREE.Mesh, scene: THREE.Scene, gameState: any) {
+  const distanceToPlayer = npc.position.distanceTo(player.position)
+
+  if (distanceToPlayer < npc.detectionRange) {
+    npc.state = "chase"
+    gameState.threatLevel = Math.min(5, gameState.threatLevel + 0.1)
+  } else if (npc.state === "chase" && distanceToPlayer > npc.detectionRange * 1.5) {
+    npc.state = "patrol"
+  }
+
+  if (npc.state === "patrol") {
+    npc.position.add(npc.direction.clone().multiplyScalar(npc.speed))
+
+    if (Math.random() < 0.01) {
+      npc.direction = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize()
+    }
+
+    if (Math.abs(npc.position.x) > 200 || Math.abs(npc.position.z) > 200) {
+      npc.position.set((Math.random() - 0.5) * 200, 1, (Math.random() - 0.5) * 200)
+    }
+  } else if (npc.state === "chase") {
+    const directionToPlayer = new THREE.Vector3().subVectors(player.position, npc.position).normalize()
+    npc.position.add(directionToPlayer.multiplyScalar(npc.speed * 1.5))
+    npc.rotation.y = Math.atan2(directionToPlayer.x, directionToPlayer.z)
+
+    if (distanceToPlayer < npc.attackRange) {
+      const now = Date.now()
+      if (now - npc.lastAttackTime > npc.attackCooldown) {
+        npc.lastAttackTime = now
+        const bulletGeometry = new THREE.SphereGeometry(0.15, 8, 8)
+        const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xff00ff })
+        const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial)
+        bullet.position.copy(npc.position)
+        bullet.position.y += 1
+
+        const direction = new THREE.Vector3().subVectors(player.position, npc.position).normalize()
+        bullet.velocity = direction.multiplyScalar(30)
+        bullet.damage = npc.isBoss ? 15 : 5
+        bullet.lifetime = 5000
+        bullet.isEnemyBullet = true
+
+        scene.add(bullet)
+      }
+    }
+  }
+
+  npc.position.x = Math.max(-250, Math.min(250, npc.position.x))
+  npc.position.z = Math.max(-250, Math.min(250, npc.position.z))
+}
+
+function updateNPC(npc: THREE.Mesh) {
+  npc.position.add(npc.direction.clone().multiplyScalar(0.1))
+
+  if (Math.random() < 0.02) {
+    npc.direction = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize()
+  }
+
+  if (Math.abs(npc.position.x) > 200 || Math.abs(npc.position.z) > 200) {
+    npc.position.set((Math.random() - 0.5) * 200, 1, (Math.random() - 0.5) * 200)
+  }
+}
+
+function updateVehicle(vehicle: THREE.Mesh) {
+  vehicle.position.add(vehicle.velocity)
+  vehicle.velocity.multiplyScalar(0.95)
+}
+
+function updateBullets(bullets: any[], scene: THREE.Scene, npcs: any[], gameState: any, player: THREE.Mesh) {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const bullet = bullets[i]
+    bullet.position.add(bullet.velocity)
+    bullet.lifetime -= 16
+
+    if (bullet.lifetime <= 0) {
+      scene.remove(bullet)
+      bullets.splice(i, 1)
+      continue
+    }
+
+    if (bullet.isEnemyBullet) {
+      const distance = bullet.position.distanceTo(player.position)
+      if (distance < 1.5) {
+        gameState.health -= bullet.damage
+        gameState.wantedLevel = Math.min(gameState.maxWantedLevel, gameState.wantedLevel + 0.5)
+        scene.remove(bullet)
+        bullets.splice(i, 1)
+        continue
+      }
+    } else {
+      for (let j = 0; j < npcs.length; j++) {
+        const npc = npcs[j]
+        const distance = bullet.position.distanceTo(npc.position)
+
+        if (distance < 1.5) {
+          npc.health -= bullet.damage
+          gameState.money += npc.isBoss ? 500 : 10
+          gameState.wantedLevel = Math.min(gameState.maxWantedLevel, gameState.wantedLevel + 0.2)
+
+          if (npc.material) {
+            npc.material.color.setHex(0xff0000)
+            setTimeout(() => {
+              npc.material.color.setHSL(Math.random(), 0.7, 0.5)
+            }, 100)
+          }
+
+          if (npc.health <= 0) {
+            scene.remove(npc)
+            npcs.splice(j, 1)
+            gameState.money += npc.isBoss ? 2000 : 100
+            gameState.kills += 1
+            gameState.comboKills += 1
+            gameState.comboDamage = Math.min(3, 1 + gameState.comboKills * 0.2)
+
+            // Create explosion
+            createExplosion(scene, npc.position, 20)
+          }
+
+          scene.remove(bullet)
+          bullets.splice(i, 1)
+          break
+        }
+      }
+    }
+  }
+}
+
+function createExplosion(scene: THREE.Scene, position: THREE.Vector3, radius: number) {
+  const explosionGeometry = new THREE.SphereGeometry(radius, 16, 16)
+  const explosionMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff6600,
+    transparent: true,
+    opacity: 0.8,
+  })
+  const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial)
+  explosion.position.copy(position)
+  explosion.lifetime = 300
+  explosion.maxLifetime = 300
+  scene.add(explosion)
+  return explosion
+}
+
+function updateExplosions(explosions: any[], scene: THREE.Scene) {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const explosion = explosions[i]
+    explosion.lifetime -= 16
+    explosion.material.opacity = (explosion.lifetime / explosion.maxLifetime) * 0.8
+    explosion.scale.multiplyScalar(1.05)
+
+    if (explosion.lifetime <= 0) {
+      scene.remove(explosion)
+      explosions.splice(i, 1)
+    }
+  }
+}
+
+function applyScreenShake(camera: THREE.PerspectiveCamera, playerState: any) {
+  if (playerState.screenShakeIntensity > 0) {
+    const shake = playerState.screenShakeIntensity
+    camera.position.x += (Math.random() - 0.5) * shake
+    camera.position.y += (Math.random() - 0.5) * shake
+    camera.position.z += (Math.random() - 0.5) * shake
+    playerState.screenShakeIntensity *= 0.9
+  }
+}

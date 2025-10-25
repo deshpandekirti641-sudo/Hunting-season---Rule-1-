@@ -1,0 +1,237 @@
+"use client"
+
+import { useState, useEffect } from "react"
+
+interface GameState {
+  health: number
+  money: number
+  ammo: number
+  currentWeapon: string
+  inVehicle: boolean
+  completedMissions: number
+  stamina?: number
+  maxStamina?: number
+  kills?: number
+  deaths?: number
+  accuracy?: number
+  totalShots?: number
+  totalHits?: number
+  distanceTraveled?: number
+  timeElapsed?: number
+  level?: number
+  experience?: number
+  maxExperience?: number
+  wantedLevel?: number
+  maxWantedLevel?: number
+  threatLevel?: number
+  comboKills?: number
+  comboDamage?: number
+}
+
+export default function GameHUD({ gameState }: { gameState: GameState; inVehicle?: boolean }) {
+  const [time, setTime] = useState("12:00")
+  const [showStats, setShowStats] = useState(false)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = new Date()
+      setTime(now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const accuracy = gameState.totalShots ? Math.round(((gameState.totalHits || 0) / gameState.totalShots) * 100) : 0
+  const wantedLevel = gameState.wantedLevel || 0
+  const threatLevel = gameState.threatLevel || 0
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, "0")}`
+  }
+
+  const expPercentage = ((gameState.experience || 0) / (gameState.maxExperience || 1)) * 100
+
+  const getWantedColor = () => {
+    if (wantedLevel < 1) return "text-green-400"
+    if (wantedLevel < 2) return "text-yellow-400"
+    if (wantedLevel < 3) return "text-orange-400"
+    if (wantedLevel < 4) return "text-red-500"
+    return "text-red-600"
+  }
+
+  return (
+    <div className="fixed inset-0 pointer-events-none">
+      {/* Top Left - Minimap */}
+      <div className="absolute top-4 left-4 w-40 h-40 border-2 border-cyan-400 bg-black/70 rounded-lg shadow-lg shadow-cyan-500/50">
+        <div className="w-full h-full flex flex-col items-center justify-center">
+          <div className="text-cyan-400 text-xs font-mono font-bold mb-2">MINIMAP</div>
+          <div className="w-32 h-32 border border-cyan-400/50 bg-black/50 rounded relative">
+            <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-magenta-500 rounded-full transform -translate-x-1/2 -translate-y-1/2" />
+          </div>
+        </div>
+      </div>
+
+      {/* Top Center - Mission Info */}
+      <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-center font-mono text-sm">
+        <div className="text-cyan-400 font-bold mb-1">CURRENT MISSION</div>
+        <div className="text-green-400 text-xs bg-black/70 px-4 py-2 rounded border border-green-400/50">
+          {gameState.completedMissions > 0 ? `MISSION ${gameState.completedMissions + 1}` : "MISSION 1"}
+        </div>
+      </div>
+
+      {/* Top Right - Time & Location */}
+      <div className="absolute top-4 right-4 text-right text-cyan-400 font-mono text-sm bg-black/70 px-4 py-3 rounded border border-cyan-400/50">
+        <div className="text-magenta-500 font-bold">{time}</div>
+        <div className="text-green-400 text-xs">NEON NEXUS CITY</div>
+        <div className="text-yellow-400 text-xs mt-1">LVL {gameState.level || 1}</div>
+      </div>
+
+      {wantedLevel > 0 && (
+        <div
+          className={`absolute top-24 right-4 font-mono text-sm bg-black/70 px-4 py-3 rounded border-2 ${getWantedColor()} border-current shadow-lg`}
+        >
+          <div className={`${getWantedColor()} font-bold animate-pulse`}>WANTED LEVEL</div>
+          <div className="text-2xl font-bold mt-1">{"★".repeat(Math.ceil(wantedLevel))}</div>
+        </div>
+      )}
+
+      {threatLevel > 0 && (
+        <div className="absolute top-40 right-4 font-mono text-xs bg-red-900/70 px-3 py-2 rounded border border-red-500 text-red-300">
+          <div className="font-bold">THREAT</div>
+          <div className="text-red-400">{Math.round(threatLevel)}/5</div>
+        </div>
+      )}
+
+      {/* Bottom Left - Primary Stats */}
+      <div className="absolute bottom-4 left-4 space-y-3 font-mono text-sm bg-black/70 px-4 py-3 rounded border border-cyan-400/50">
+        {/* Health Bar */}
+        <div className="flex items-center gap-2">
+          <div className="w-40 h-5 border border-red-500 bg-black/50 rounded">
+            <div
+              className="h-full bg-gradient-to-r from-red-600 to-red-500 transition-all duration-200 rounded"
+              style={{ width: `${gameState.health}%` }}
+            />
+          </div>
+          <span className="text-red-500 font-bold min-w-12">HP: {gameState.health}</span>
+        </div>
+
+        {/* Stamina Bar */}
+        <div className="flex items-center gap-2">
+          <div className="w-40 h-4 border border-yellow-500 bg-black/50 rounded">
+            <div
+              className="h-full bg-gradient-to-r from-yellow-600 to-yellow-500 transition-all duration-200 rounded"
+              style={{ width: `${gameState.stamina || 100}%` }}
+            />
+          </div>
+          <span className="text-yellow-500 text-xs min-w-12">STA: {gameState.stamina || 100}</span>
+        </div>
+
+        {/* Experience Bar */}
+        <div className="flex items-center gap-2">
+          <div className="w-40 h-4 border border-green-500 bg-black/50 rounded">
+            <div
+              className="h-full bg-gradient-to-r from-green-600 to-green-500 transition-all duration-200 rounded"
+              style={{ width: `${expPercentage}%` }}
+            />
+          </div>
+          <span className="text-green-500 text-xs min-w-12">EXP: {gameState.experience || 0}</span>
+        </div>
+
+        {/* Money */}
+        <div className="text-green-400 font-bold">CASH: ${gameState.money.toLocaleString()}</div>
+
+        {/* Ammo */}
+        <div className="text-yellow-400">AMMO: {gameState.ammo}</div>
+
+        {/* Weapon */}
+        <div className="text-cyan-400">WEAPON: {gameState.currentWeapon.toUpperCase()}</div>
+
+        {(gameState.comboKills || 0) > 0 && (
+          <div className="text-orange-400 font-bold animate-pulse">COMBO x{gameState.comboDamage?.toFixed(1)}</div>
+        )}
+
+        {/* Time Elapsed */}
+        <div className="text-magenta-500 text-xs">TIME: {formatTime(gameState.timeElapsed || 0)}</div>
+      </div>
+
+      {/* Bottom Right - Combat Stats */}
+      <div className="absolute bottom-4 right-4 text-right font-mono text-sm bg-black/70 px-4 py-3 rounded border border-magenta-500/50 space-y-1">
+        <div className="text-magenta-500 font-bold">COMBAT STATS</div>
+        <div className="text-cyan-400 text-xs">KILLS: {gameState.kills || 0}</div>
+        <div className="text-red-400 text-xs">DEATHS: {gameState.deaths || 0}</div>
+        <div className="text-green-400 text-xs">ACCURACY: {accuracy}%</div>
+        <div className="text-yellow-400 text-xs">SHOTS: {gameState.totalShots || 0}</div>
+        <div className="text-cyan-400 text-xs mt-2 border-t border-magenta-500/30 pt-1">
+          MISSIONS: {gameState.completedMissions}
+        </div>
+      </div>
+
+      {/* Center - Crosshair */}
+      {!gameState.inVehicle && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+          <div className="w-8 h-8 border-2 border-cyan-400 rounded-full opacity-60" />
+          <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-cyan-400 transform -translate-x-1/2 -translate-y-1/2" />
+          <div className="absolute top-0 left-1/2 w-0.5 h-2 bg-cyan-400 transform -translate-x-1/2" />
+          <div className="absolute bottom-0 left-1/2 w-0.5 h-2 bg-cyan-400 transform -translate-x-1/2" />
+          <div className="absolute top-1/2 left-0 w-2 h-0.5 bg-cyan-400 transform -translate-y-1/2" />
+          <div className="absolute top-1/2 right-0 w-2 h-0.5 bg-cyan-400 transform -translate-y-1/2" />
+        </div>
+      )}
+
+      {/* Vehicle Info */}
+      {gameState.inVehicle && (
+        <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 font-mono text-cyan-400 text-sm border border-cyan-400 px-6 py-3 bg-black/70 rounded shadow-lg shadow-cyan-500/50">
+          VEHICLE MODE - SPEED: 0 KM/H | [E] EXIT
+        </div>
+      )}
+
+      {/* Controls Help */}
+      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 font-mono text-xs text-cyan-400/70 text-center">
+        [W/A/S/D] MOVE | [SPACE] JUMP | [SHIFT] SPRINT | [E] INTERACT | [CLICK] SHOOT | [1-3] WEAPONS | [C] CAMERA |
+        [ESC] MENU
+      </div>
+
+      {/* Stats Toggle Button */}
+      <button
+        onClick={() => setShowStats(!showStats)}
+        className="absolute top-4 left-1/2 transform -translate-x-1/2 -translate-y-12 pointer-events-auto px-3 py-1 bg-black/70 border border-cyan-400/50 text-cyan-400 text-xs font-mono rounded hover:border-cyan-400 transition-colors"
+      >
+        {showStats ? "HIDE STATS" : "SHOW STATS"}
+      </button>
+
+      {/* Detailed Stats Panel */}
+      {showStats && (
+        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 pointer-events-auto bg-black/90 border-2 border-cyan-400 rounded-lg p-6 font-mono text-sm max-w-md shadow-lg shadow-cyan-500/50">
+          <div className="text-cyan-400 font-bold text-center mb-4">DETAILED STATISTICS</div>
+          <div className="grid grid-cols-2 gap-4 text-xs">
+            <div className="text-green-400">
+              <div className="font-bold">KILLS</div>
+              <div className="text-lg">{gameState.kills || 0}</div>
+            </div>
+            <div className="text-red-400">
+              <div className="font-bold">DEATHS</div>
+              <div className="text-lg">{gameState.deaths || 0}</div>
+            </div>
+            <div className="text-yellow-400">
+              <div className="font-bold">ACCURACY</div>
+              <div className="text-lg">{accuracy}%</div>
+            </div>
+            <div className="text-cyan-400">
+              <div className="font-bold">SHOTS FIRED</div>
+              <div className="text-lg">{gameState.totalShots || 0}</div>
+            </div>
+            <div className="text-magenta-500">
+              <div className="font-bold">MISSIONS</div>
+              <div className="text-lg">{gameState.completedMissions}</div>
+            </div>
+            <div className="text-green-400">
+              <div className="font-bold">LEVEL</div>
+              <div className="text-lg">{gameState.level || 1}</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
